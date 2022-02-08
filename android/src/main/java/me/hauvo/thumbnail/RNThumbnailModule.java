@@ -39,13 +39,17 @@ public class RNThumbnailModule extends ReactContextBaseJavaModule {
 
   @ReactMethod
   public void get(String filePath, Promise promise) {
-    filePath = filePath.replace("file://","");
     MediaMetadataRetriever retriever = new MediaMetadataRetriever();
-    retriever.setDataSource(filePath);
+    if (URLUtil.isFileUrl(filePath)) {
+      filePath = filePath.replace("file://","");
+      retriever.setDataSource(filePath);
+    } else{
+      retriever.setDataSource(filePath,new HashMap<String, String>());
+    }
+    String time = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
+    long timeInMillisec = Long.parseLong(time );
     Bitmap image = retriever.getFrameAtTime(1000000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
-
-    String fullPath = Environment.getExternalStorageDirectory().getAbsolutePath() + "/thumb";
-
+    String fullPath = reactContext.getApplicationContext().getCacheDir().getAbsolutePath() + "/thumb";
     try {
       File dir = new File(fullPath);
       if (!dir.exists()) {
@@ -59,24 +63,53 @@ public class RNThumbnailModule extends ReactContextBaseJavaModule {
       file.createNewFile();
       fOut = new FileOutputStream(file);
 
-      // 100 means no compression, the lower you go, the stronger the compression
-      image.compress(Bitmap.CompressFormat.JPEG, 100, fOut);
+      image.compress(Bitmap.CompressFormat.JPEG, 50, fOut);
       fOut.flush();
       fOut.close();
 
-      // MediaStore.Images.Media.insertImage(reactContext.getContentResolver(), file.getAbsolutePath(), file.getName(), file.getName());
+      long cacheDirSize = 200 * 1024 * 1024;
+      long newSize = image.getByteCount() + getDirSize(dir);
+      if(newSize>cacheDirSize){
+        cleanDir(dir, cacheDirSize / 2);
+      }
 
       WritableMap map = Arguments.createMap();
 
       map.putString("path", "file://" + fullPath + '/' + fileName);
-      map.putDouble("width", image.getWidth());
-      map.putDouble("height", image.getHeight());
-
+      map.putDouble("timeInMilliSec",timeInMillisec);
+      retriever.release();
       promise.resolve(map);
 
     } catch (Exception e) {
       Log.e("E_RNThumnail_ERROR", e.getMessage());
       promise.reject("E_RNThumnail_ERROR", e);
+    }
+  }
+
+  private static long getDirSize(File dir) {
+    long size = 0;
+    File[] files = dir.listFiles();
+
+    for (File file : files) {
+      if (file.isFile()) {
+        size += file.length();
+      }
+    }
+    return size;
+  }
+
+  private static void cleanDir(File dir, long bytes) {
+    long bytesDeleted = 0;
+    File[] files = dir.listFiles();
+    Arrays.sort(files, LastModifiedFileComparator.LASTMODIFIED_COMPARATOR);
+
+    for (File file : files) {
+      bytesDeleted += file.length();
+      file.delete();
+
+      if (bytesDeleted >= bytes) {
+        break;
+      }
     }
   }
 }
